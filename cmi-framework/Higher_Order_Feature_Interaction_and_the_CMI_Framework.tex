@@ -1,0 +1,985 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm, bm, mathtools}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+\title{A Conditional Mutual Information Framework for\\
+Interaction-Order Contributions in Learned Representations}
+\author{J. P. Ibieta-Jimenez\\
+\small Draft extension of the cross-fitted CMI framework}
+\date{\today}
+
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{corollary}{Corollary}
+\newtheorem{remark}{Remark}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\I}{\mathbb{I}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\1}{\mathbf{1}}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+This document extends the cross-fitted conditional mutual information (CMI) framework from
+\emph{scores} to \emph{interaction-order contributions} in learned representations.
+
+The central question is:
+\begin{quote}
+How much unique predictive information about a target $Y$ is contributed by the order-$k$
+interaction features, beyond what is already explained by the baseline representation and all
+lower-order interactions?
+\end{quote}
+
+This allows us to move from score comparison to a principled information-theoretic analysis of
+\emph{representation complexity}. In particular, it provides a formal way to evaluate whether
+pairwise interactions are sufficient, whether higher-order interactions add predictive value, and
+which interaction orders matter most.
+
+\section{Setup and Notation}
+
+Let
+\begin{itemize}[leftmargin=1.5em]
+    \item $Y \in \{0,1\}$ be a binary target,
+    \item $R$ denote a baseline representation,
+    \item $\Phi_1, \Phi_2, \ldots, \Phi_K$ denote feature blocks corresponding to interaction orders
+    $1,2,\ldots,K$,
+    \item $\Phi_{<k} := (\Phi_1,\ldots,\Phi_{k-1})$,
+    \item $\Phi_{\le k} := (\Phi_1,\ldots,\Phi_k)$.
+\end{itemize}
+
+Interpretation:
+\begin{itemize}[leftmargin=1.5em]
+    \item $\Phi_1$ may contain unary / linear features,
+    \item $\Phi_2$ may contain pairwise interactions,
+    \item $\Phi_3$ may contain triplet interactions,
+    \item and so on.
+\end{itemize}
+
+The role of the baseline representation $R$ is to prevent higher-order blocks from receiving credit
+for predictive information that is already available in the underlying representation.
+
+\subsection{The Role and Choice of the Baseline Representation $R$}
+
+The choice of $R$ is one of the most consequential design decisions in the framework, because it
+determines the precise meaning of the word ``unique'' in $\Delta_k$.
+Concretely, $\Delta_k = I(Y;\Phi_k \mid R,\Phi_{<k})$ answers the question:
+\emph{how much does $\Phi_k$ add, given that $R$ and all lower-order blocks are already known?}
+Different choices of $R$ give genuinely different answers, each with a distinct scientific
+interpretation.
+
+\paragraph{$R = \varnothing$ (empty baseline).}
+$\Delta_k$ measures the incremental value of $\Phi_k$ beyond the lower-order feature blocks alone.
+This is the cleanest setting for synthetic validation, where no learned representation is
+involved.
+
+\paragraph{$R = $ a frozen backbone embedding.}
+$\Delta_k$ measures how much $\Phi_k$ adds beyond what the backbone already captures.
+This is the appropriate choice when evaluating whether explicit interaction features provide
+complementary signal on top of a pretrained model.
+Importantly, if the backbone was \emph{trained using $\Phi_k$} as part of its input or objective,
+then $R$ and $\Phi_k$ are statistically entangled: conditioning on $R$ partially conditions on
+$\Phi_k$ itself, leading to systematic underestimation of $\Delta_k$.
+To avoid this circularity, $R$ should ideally come from a backbone trained
+\emph{without explicit knowledge} of the $\Phi_k$ blocks being evaluated.
+
+\paragraph{$R = $ the output of a specific intermediate layer $\ell$.}
+This choice enables an \emph{interaction emergence profile}: by sweeping $\ell$ across depth, one
+can track $\Delta_k(\ell) = I(Y;\Phi_k \mid \text{layer}_\ell,\Phi_{<k})$ and identify at which
+depth the network ceases to benefit from the explicit interaction block.
+At shallow layers, $\Delta_k(\ell)$ is expected to be large (the network has not yet encoded
+order-$k$ structure); at deeper layers it should decay as the network learns to represent
+interactions internally.
+
+\begin{remark}[Effect of richer $R$ on estimator requirements]
+As $R$ becomes higher-dimensional or more informative, the auxiliary model for
+$P(Y \mid R, \Phi_{<k})$ must be flexible enough to use $R$ effectively.
+A misspecified or underfit auxiliary model will underestimate $H(Y \mid R, \Phi_{<k})$,
+inflating $\Delta_k$.
+In practice, richer $R$ demands more expressive auxiliary estimators (e.g.\ gradient-boosted
+trees rather than logistic regression), or careful dimensionality reduction of $R$ before
+estimation.
+\end{remark}
+
+\section{Theoretical Foundation}
+
+\subsection{Order-$k$ Conditional Mutual Information}
+
+\begin{definition}[Order-$k$ Incremental Predictive Information]
+The incremental predictive information carried by the order-$k$ interaction block is defined as
+\begin{equation}
+\Delta_k
+:=
+I(Y;\Phi_k \mid R,\Phi_{<k}).
+\label{eq:delta_k_def}
+\end{equation}
+\end{definition}
+
+This quantity measures the reduction in uncertainty about $Y$ when $\Phi_k$ is observed, given that
+the baseline representation $R$ and all lower-order interaction blocks $\Phi_{<k}$ are already known.
+
+\begin{remark}[Relativity of $\Delta_k$ to the choice of $R$]
+$\Delta_k$ is not an absolute property of $\Phi_k$; it is a property of $\Phi_k$
+\emph{relative to $R$}.
+If $R$ already contains the information in $\Phi_k$ (e.g.\ because $R$ was produced by a model
+trained with $\Phi_k$ as input), then $\Delta_k \approx 0$ not because $\Phi_k$ is uninformative
+about $Y$, but because $R$ has already absorbed that information.
+Conversely, if $R$ is an early-layer or task-agnostic embedding, $\Delta_k$ may be large even for
+interaction orders that a deeper backbone would have implicitly learned.
+The same $\Phi_k$ block can yield very different $\Delta_k$ values depending on which $R$ is used,
+and comparing $\Delta_k$ across experiments is only meaningful when $R$ is held fixed.
+\end{remark}
+
+\subsection{Entropy Reduction Identity}
+
+\begin{proposition}[Entropy Reduction Identity]
+For each $k \ge 1$,
+\begin{equation}
+\Delta_k
+=
+H(Y \mid R,\Phi_{<k}) - H(Y \mid R,\Phi_{\le k}).
+\label{eq:entropy_reduction_identity}
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+By the definition of conditional mutual information,
+\[
+I(Y;\Phi_k \mid R,\Phi_{<k})
+=
+H(Y \mid R,\Phi_{<k}) - H(Y \mid R,\Phi_k,R,\Phi_{<k}).
+\]
+Since $(\Phi_k,\Phi_{<k}) = \Phi_{\le k}$, we obtain
+\[
+I(Y;\Phi_k \mid R,\Phi_{<k})
+=
+H(Y \mid R,\Phi_{<k}) - H(Y \mid R,\Phi_{\le k}).
+\]
+\end{proof}
+
+\subsection{Interpretation}
+
+Equation \eqref{eq:entropy_reduction_identity} shows that $\Delta_k$ is the
+\emph{incremental conditional entropy reduction} obtained by adding the order-$k$ features to a
+predictor that already has access to the baseline representation and all lower-order interactions.
+
+Thus:
+\begin{itemize}[leftmargin=1.5em]
+    \item $\Delta_k > 0$ means order $k$ contributes unique predictive information,
+    \item $\Delta_k \approx 0$ means order $k$ is conditionally redundant given lower orders,
+    \item larger $\Delta_k$ means higher unique relevance of order $k$ for predicting $Y$.
+\end{itemize}
+
+\subsection{Binary Entropy Formulation}
+
+For binary targets, define the binary entropy function
+\begin{equation}
+H_b(p) = -p \log p - (1-p)\log(1-p),
+\qquad p \in (0,1).
+\label{eq:binary_entropy}
+\end{equation}
+
+\begin{theorem}[Order-$k$ CMI via Binary Entropy Reduction]
+For binary $Y$,
+\begin{equation}
+\Delta_k
+=
+\E\!\left[
+H_b\!\left( P(Y=1 \mid R,\Phi_{<k}) \right)
+-
+H_b\!\left( P(Y=1 \mid R,\Phi_{\le k}) \right)
+\right].
+\label{eq:binary_entropy_reduction}
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+Apply Proposition \eqref{eq:entropy_reduction_identity} and use the fact that for binary $Y$,
+\[
+H(Y \mid X) = \E\left[ H_b\!\left( P(Y=1 \mid X) \right) \right].
+\]
+Substituting $X=(R,\Phi_{<k})$ and $X=(R,\Phi_{\le k})$ yields the result.
+\end{proof}
+
+\section{Decomposition Across Interaction Orders}
+
+\begin{theorem}[Chain Rule Decomposition Across Orders]
+For any $K \ge 1$,
+\begin{equation}
+I(Y;\Phi_{\le K}\mid R)
+=
+\sum_{k=1}^K I(Y;\Phi_k \mid R,\Phi_{<k})
+=
+\sum_{k=1}^K \Delta_k.
+\label{eq:chain_rule_orders}
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+Apply the chain rule of conditional mutual information:
+\[
+I(Y;\Phi_1,\ldots,\Phi_K \mid R)
+=
+\sum_{k=1}^K I(Y;\Phi_k \mid R,\Phi_1,\ldots,\Phi_{k-1}).
+\]
+By definition, each summand is $\Delta_k$.
+\end{proof}
+
+Equation \eqref{eq:chain_rule_orders} motivates the \emph{interaction-order profile}
+\[
+(\Delta_1,\Delta_2,\ldots,\Delta_K),
+\]
+which quantifies how predictive information is distributed across interaction orders.
+
+\section{Estimation via Cross-Entropy Reduction}
+
+\subsection{Probabilistic Model Approach}
+
+To estimate $\Delta_k$, we fit two probabilistic models:
+
+\begin{align}
+\hat p_{<k}(r,\phi_{<k})
+&\approx
+P(Y=1 \mid R=r,\Phi_{<k}=\phi_{<k}),
+\label{eq:restricted_model}
+\\
+\hat p_{\le k}(r,\phi_{\le k})
+&\approx
+P(Y=1 \mid R=r,\Phi_{\le k}=\phi_{\le k}).
+\label{eq:full_model}
+\end{align}
+
+The first is the \emph{restricted model}, which excludes order $k$.
+The second is the \emph{full model}, which includes order $k$.
+
+\subsection{Empirical Estimator}
+
+Suppose we observe i.i.d. data
+\[
+\{(Y_i,R_i,\Phi_{1,i},\ldots,\Phi_{K,i})\}_{i=1}^n.
+\]
+
+\begin{definition}[Empirical Order-$k$ CMI Estimator]
+The empirical estimator of $\Delta_k$ is
+\begin{equation}
+\hat \Delta_k
+=
+\frac{1}{n}
+\sum_{i=1}^n
+\left[
+H_b\!\left( \hat p_{<k}(R_i,\Phi_{<k,i}) \right)
+-
+H_b\!\left( \hat p_{\le k}(R_i,\Phi_{\le k,i}) \right)
+\right].
+\label{eq:empirical_delta}
+\end{equation}
+\end{definition}
+
+\subsection{Log-Loss Equivalence}
+
+Define the binary cross-entropy loss
+\begin{equation}
+\ell(y,p) = -y\log p - (1-y)\log(1-p).
+\label{eq:logloss}
+\end{equation}
+
+\begin{theorem}[Log-Loss Gain Equivalence]
+The empirical estimator in \eqref{eq:empirical_delta} is equivalent to the average held-out
+log-loss gain:
+\begin{equation}
+\hat \Delta_k
+=
+\frac{1}{n}
+\sum_{i=1}^n
+\left[
+\ell\!\left(Y_i,\hat p_{<k}(R_i,\Phi_{<k,i})\right)
+-
+\ell\!\left(Y_i,\hat p_{\le k}(R_i,\Phi_{\le k,i})\right)
+\right].
+\label{eq:logloss_gain_equivalence}
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+For binary targets, expected cross-entropy equals binary entropy when evaluated at the true
+conditional probability. Thus, the entropy reduction formulation in
+\eqref{eq:empirical_delta} is equivalent to reduction in expected log-loss, and empirically this is
+estimated by the sample average in \eqref{eq:logloss_gain_equivalence}.
+\end{proof}
+
+Equation \eqref{eq:logloss_gain_equivalence} is the practical estimator we will use:
+\[
+\text{incremental CMI of order } k
+\;\approx\;
+\text{held-out log-loss of restricted model}
+-
+\text{held-out log-loss of full model}.
+\]
+
+\section{Cross-Fitting for Unbiased Estimation}
+
+\subsection{Why Cross-Fitting is Necessary}
+
+If the same data are used both to train $\hat p_{<k},\hat p_{\le k}$ and to evaluate
+\eqref{eq:empirical_delta}, the resulting estimate is optimistically biased due to overfitting.
+This is especially problematic in high-dimensional representation spaces.
+
+\subsection{Cross-Fitted Estimator}
+
+\begin{algorithm}[h]
+\caption{Cross-Fitted Estimation of $\Delta_k = I(Y;\Phi_k\mid R,\Phi_{<k})$}
+\begin{algorithmic}[1]
+\Require Dataset $\mathcal{D}=\{(Y_i,R_i,\Phi_{1,i},\ldots,\Phi_{K,i})\}_{i=1}^n$, number of folds $M$, order $k$
+\State Partition indices $\{1,\ldots,n\}$ into disjoint folds $F_1,\ldots,F_M$
+\For{$m=1$ to $M$}
+    \State $\mathcal{D}^{(m)}_{\mathrm{train}} \gets \{i : i \notin F_m\}$
+    \State $\mathcal{D}^{(m)}_{\mathrm{test}} \gets \{i : i \in F_m\}$
+    \State Train restricted model $\widehat P^{(m)}_{<k}$ on inputs $(R,\Phi_{<k})$
+    \State Train full model $\widehat P^{(m)}_{\le k}$ on inputs $(R,\Phi_{\le k})$
+    \For{$i \in F_m$}
+        \State $\hat p^{(m)}_{<k,i} \gets \widehat P^{(m)}_{<k}(R_i,\Phi_{<k,i})$
+        \State $\hat p^{(m)}_{\le k,i} \gets \widehat P^{(m)}_{\le k}(R_i,\Phi_{\le k,i})$
+    \EndFor
+    \State
+    \[
+    \widehat{\Delta}^{(m)}_k
+    \gets
+    \frac{1}{|F_m|}
+    \sum_{i\in F_m}
+    \left[
+    \ell(Y_i,\hat p^{(m)}_{<k,i})
+    -
+    \ell(Y_i,\hat p^{(m)}_{\le k,i})
+    \right]
+    \]
+\EndFor
+\State
+\[
+\widehat{\Delta}^{\mathrm{CF}}_k
+=
+\frac{1}{M}\sum_{m=1}^M \widehat{\Delta}^{(m)}_k
+\]
+\State \Return $\widehat{\Delta}^{\mathrm{CF}}_k$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{remark}[Circularity risk when $R$ is a trained embedding]
+The cross-fitting procedure eliminates overfitting bias in the auxiliary models
+$\hat p_{<k}$ and $\hat p_{\le k}$.
+However, it does \emph{not} resolve the deeper issue that arises when $R$ itself was trained on
+data that includes $\Phi_k$: in that case, $R$ already encodes part of the signal in $\Phi_k$,
+so the restricted model (which sees $R$) effectively has partial access to $\Phi_k$, and the
+estimated $\Delta_k$ will be biased downward regardless of the cross-fitting design.
+The remedy is to ensure that the backbone producing $R$ was trained on a held-out task or without
+the explicit interaction features being evaluated.
+In the synthetic validation experiments (Section~\ref{sec:synthetic}), this issue does not arise
+because $R = \varnothing$.
+\end{remark}
+
+\subsection{Asymptotic Interpretation}
+
+\begin{proposition}[Asymptotic Interpretation]
+Under regularity conditions and sufficient calibration of the auxiliary predictors,
+\begin{equation}
+\widehat{\Delta}^{\mathrm{CF}}_k
+\;\xrightarrow[n\to\infty]{}\;
+I(Y;\Phi_k\mid R,\Phi_{<k}).
+\label{eq:asymptotic_consistency}
+\end{equation}
+\end{proposition}
+
+\begin{remark}
+As in the original score-based framework, finite-sample bias depends on:
+\begin{itemize}[leftmargin=1.5em]
+    \item the quality of the auxiliary conditional probability estimators,
+    \item model calibration,
+    \item sample size relative to representation dimension,
+    \item and the cross-fitting design.
+\end{itemize}
+Thus, $\widehat{\Delta}^{\mathrm{CF}}_k$ should be interpreted as a
+\emph{predictive plug-in estimate of incremental conditional information}.
+\end{remark}
+
+\section{Order Selection and Adaptive Interaction Modeling}
+
+\subsection{Order Relevance Profile}
+
+The vector
+\begin{equation}
+\bm{\Delta}
+=
+(\Delta_1,\Delta_2,\ldots,\Delta_K)
+\label{eq:delta_profile}
+\end{equation}
+defines the \emph{order relevance profile} of the task.
+
+This profile answers:
+\begin{itemize}[leftmargin=1.5em]
+    \item Which interaction order first contributes substantial predictive information?
+    \item Are pairwise interactions sufficient?
+    \item Do triplet or higher-order terms add unique signal beyond lower orders?
+\end{itemize}
+
+\begin{remark}[Order profile is relative to $R$]
+The order relevance profile $\bm{\Delta}$ characterizes task complexity
+\emph{relative to the baseline $R$}.
+A profile with large $\Delta_1$ and small $\Delta_k$ for $k \ge 2$ may reflect either that the
+task is genuinely linear, or that $R$ has already captured all pairwise and higher-order structure.
+When comparing profiles across architectures or tasks, $R$ must be held fixed to ensure
+the comparisons are meaningful.
+\end{remark}
+
+\subsection{Learning Which Orders Matter}
+
+Suppose we build a model with order-specific branches:
+\[
+\Psi(x) = \sum_{k=1}^K \alpha_k(x)\,\Phi_k(x),
+\]
+where $\alpha_k(x)$ are order gates.
+
+The information-theoretic goal is to retain orders with high incremental value:
+\[
+\Delta_k = I(Y;\Phi_k \mid R,\Phi_{<k}).
+\]
+
+This suggests a principled order-selection rule:
+\begin{itemize}[leftmargin=1.5em]
+    \item keep order $k$ if $\Delta_k$ is large relative to its computational cost,
+    \item prune order $k$ if $\Delta_k \approx 0$ given lower orders.
+\end{itemize}
+
+Thus, the CMI framework provides a formal target for \emph{adaptive interaction-order selection}.
+
+\section{Specialization to Clifford-Style Order-2 Interactions}
+
+For order $2$, let $\Phi_2$ denote the pairwise interaction block. In a Clifford-style architecture,
+$\Phi_2$ may include both:
+\begin{itemize}[leftmargin=1.5em]
+    \item symmetric / coherence terms (inner-product-like),
+    \item antisymmetric / structural terms (wedge-like).
+\end{itemize}
+
+Then
+\[
+\Delta_2 = I(Y;\Phi_2 \mid R,\Phi_1)
+\]
+measures the unique predictive information carried by pairwise relational structure beyond the
+baseline representation and unary terms.
+
+More finely, if $\Phi_2=(\Phi_2^{\mathrm{sym}},\Phi_2^{\mathrm{asym}})$, one may define
+\begin{align}
+\Delta_2^{\mathrm{sym}}
+&=
+I(Y;\Phi_2^{\mathrm{sym}} \mid R,\Phi_1),
+\\
+\Delta_2^{\mathrm{asym}}
+&=
+I(Y;\Phi_2^{\mathrm{asym}} \mid R,\Phi_1,\Phi_2^{\mathrm{sym}}),
+\end{align}
+to separate the predictive contribution of symmetric and antisymmetric pairwise structure.
+
+\begin{remark}[Choice of $R$ for Clifford-style analysis]
+In the order-2 case, the choice of $R$ has a direct impact on whether $\Delta_2$ captures
+genuinely \emph{relational} structure or merely richer unary representations.
+If $R$ is a strong unary encoder (e.g.\ the output of a deep MLP applied independently to each
+input), then $\Delta_2 > 0$ provides clean evidence that pairwise structure adds information
+beyond what per-element processing can capture.
+If $R$ is weak or absent, $\Delta_2$ may absorb both unary and relational signal, making
+interpretation less precise.
+For the branch-wise decomposition into symmetric and antisymmetric terms, the ordering matters:
+$\Delta_2^{\mathrm{sym}}$ is computed first, and $\Delta_2^{\mathrm{asym}}$ measures what remains
+after the symmetric component is already known.
+Swapping the order would yield different values and a different attribution.
+\end{remark}
+
+\section{Numerical Stability and Uncertainty Quantification}
+
+\subsection{Clipped Binary Entropy}
+
+For numerical stability, define the clipped binary entropy
+\begin{equation}
+H_b^{\varepsilon}(p)
+=
+H_b\!\left(\mathrm{clip}(p,\varepsilon,1-\varepsilon)\right),
+\qquad \varepsilon > 0.
+\label{eq:clipped_entropy}
+\end{equation}
+
+\subsection{Fold-Based Standard Error}
+
+Given fold-specific estimates $\widehat{\Delta}_k^{(1)},\ldots,\widehat{\Delta}_k^{(M)}$, define
+\begin{equation}
+\mathrm{SE}\!\left(\widehat{\Delta}^{\mathrm{CF}}_k\right)
+=
+\sqrt{
+\frac{1}{M-1}
+\sum_{m=1}^M
+\left(
+\widehat{\Delta}^{(m)}_k
+-
+\overline{\Delta}_k
+\right)^2
+},
+\qquad
+\overline{\Delta}_k = \frac{1}{M}\sum_{m=1}^M \widehat{\Delta}^{(m)}_k.
+\label{eq:fold_se}
+\end{equation}
+
+\section{Interpretation}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item $\Delta_k > 0$: order $k$ provides unique predictive information beyond lower orders,
+    \item $\Delta_k \approx 0$: order $k$ is conditionally redundant,
+    \item larger $\Delta_k$: stronger evidence that the target depends on order-$k$ interactions.
+\end{itemize}
+
+Because the estimator is based on cross-entropy reduction, all quantities are measured in nats.
+To convert to bits, divide by $\log 2$.
+
+\section{Conclusion}
+
+This framework generalizes cross-fitted conditional mutual information estimation from model
+scores to interaction-order contributions in learned representations.
+
+The core quantity,
+\[
+\Delta_k = I(Y;\Phi_k \mid R,\Phi_{<k}),
+\]
+measures the unique predictive information carried by order-$k$ interactions beyond the baseline
+representation and all lower-order structure.
+
+Its cross-fitted log-loss estimator provides a practical and principled way to:
+\begin{itemize}[leftmargin=1.5em]
+    \item quantify which interaction orders matter,
+    \item compare pairwise vs higher-order interaction blocks,
+    \item and guide adaptive interaction-order selection in neural architectures.
+\end{itemize}
+
+\section{Comparison Framework}
+
+This section formalizes how the order-wise CMI quantities can be used to compare interaction
+orders, architectural branches, and alternative representation families.
+
+\subsection{Comparison of Interaction Orders}
+
+For two interaction orders $j < k$, the quantities
+\[
+\Delta_j = I(Y;\Phi_j \mid R,\Phi_{<j}),
+\qquad
+\Delta_k = I(Y;\Phi_k \mid R,\Phi_{<k})
+\]
+measure different conditional contributions, since the conditioning sets differ.
+
+Thus, $\Delta_j$ and $\Delta_k$ should not be interpreted as direct substitutes, but rather as
+elements of an \emph{incremental hierarchy}:
+\[
+I(Y;\Phi_{\le K}\mid R) = \sum_{m=1}^K \Delta_m.
+\]
+
+The natural comparison questions are:
+\begin{itemize}[leftmargin=1.5em]
+    \item At which order does the first large gain in predictive information occur?
+    \item Does the cumulative gain saturate at low order?
+    \item Is the marginal contribution $\Delta_k$ negligible for sufficiently large $k$?
+\end{itemize}
+
+\begin{definition}[Cumulative Interaction Information]
+For $k \ge 1$, define the cumulative interaction information up to order $k$ as
+\begin{equation}
+\Gamma_k
+:=
+I(Y;\Phi_{\le k}\mid R)
+=
+\sum_{m=1}^k \Delta_m.
+\label{eq:cumulative_gamma}
+\end{equation}
+\end{definition}
+
+The sequence $(\Gamma_1,\Gamma_2,\ldots,\Gamma_K)$ describes how predictive information accumulates
+as interaction complexity grows.
+
+\subsection{Comparison of Branches Within an Order}
+
+Suppose order $k$ decomposes into branches,
+\[
+\Phi_k = (\Phi_k^{(1)},\ldots,\Phi_k^{(B)}).
+\]
+
+For example, in a Clifford-style order-2 block one may separate:
+\[
+\Phi_2 = (\Phi_2^{\mathrm{sym}}, \Phi_2^{\mathrm{asym}}),
+\]
+corresponding to symmetric/coherence and antisymmetric/structural terms.
+
+We define branch-wise incremental contributions sequentially:
+\begin{align}
+\Delta_k^{(1)}
+&:= I(Y;\Phi_k^{(1)} \mid R,\Phi_{<k}),
+\\
+\Delta_k^{(2)}
+&:= I(Y;\Phi_k^{(2)} \mid R,\Phi_{<k},\Phi_k^{(1)}),
+\\
+&\vdots \nonumber \\
+\Delta_k^{(B)}
+&:= I(Y;\Phi_k^{(B)} \mid R,\Phi_{<k},\Phi_k^{(1)},\ldots,\Phi_k^{(B-1)}).
+\label{eq:branchwise_cmi}
+\end{align}
+
+By the chain rule,
+\begin{equation}
+I(Y;\Phi_k \mid R,\Phi_{<k})
+=
+\sum_{b=1}^B \Delta_k^{(b)}.
+\label{eq:branchwise_chain}
+\end{equation}
+
+This provides a principled decomposition of the total order-$k$ contribution into branch-specific
+conditional gains.
+
+\subsection{Comparison of Architectures}
+
+Consider two representation families, $\mathcal{A}$ and $\mathcal{B}$, producing interaction blocks
+\[
+\Phi^{\mathcal{A}}_1,\ldots,\Phi^{\mathcal{A}}_K,
+\qquad
+\Phi^{\mathcal{B}}_1,\ldots,\Phi^{\mathcal{B}}_K.
+\]
+
+Examples include:
+\begin{itemize}[leftmargin=1.5em]
+    \item a Clifford-style order-2 architecture,
+    \item a generic bilinear / quadratic interaction architecture,
+    \item a tensorized higher-order interaction model,
+    \item a standard FFN-based baseline.
+\end{itemize}
+
+For each architecture, define the order profile
+\[
+\bm{\Delta}^{\mathcal{A}} = (\Delta_1^{\mathcal{A}},\ldots,\Delta_K^{\mathcal{A}}),
+\qquad
+\bm{\Delta}^{\mathcal{B}} = (\Delta_1^{\mathcal{B}},\ldots,\Delta_K^{\mathcal{B}}).
+\]
+
+Then architecture comparison can be performed along at least three axes:
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Total information captured:}
+    \[
+    \Gamma_K^{\mathcal{A}}
+    \quad \text{vs.} \quad
+    \Gamma_K^{\mathcal{B}}.
+    \]
+    \item \textbf{Order efficiency:} compare $\Delta_k$ per parameter or per FLOP.
+    \item \textbf{Information concentration:} determine whether information is concentrated at low
+    order or only appears at high order.
+\end{enumerate}
+
+\begin{remark}[Comparability requires a shared $R$]
+Architecture comparison via order profiles is only meaningful when both architectures are
+evaluated against the \emph{same} baseline $R$.
+If $R^{\mathcal{A}} \neq R^{\mathcal{B}}$, differences in $\bm{\Delta}$ may reflect differences in
+the baselines rather than in the interaction blocks themselves.
+A natural choice is to use a shared, architecture-agnostic $R$ (e.g.\ raw input features, or a
+frozen backbone trained independently of both architectures).
+\end{remark}
+
+\begin{definition}[Information Efficiency]
+For an interaction block $\Phi_k$ with computational cost $C_k > 0$, define its information
+efficiency as
+\begin{equation}
+\eta_k := \frac{\Delta_k}{C_k}.
+\label{eq:information_efficiency}
+\end{equation}
+\end{definition}
+
+This provides a cost-aware criterion for deciding whether an interaction order is worth retaining.
+
+\section{Synthetic Validation Protocol}
+\label{sec:synthetic}
+
+Before applying the framework to learned representations on real datasets, the estimator should be
+validated on synthetic tasks where the true relevant interaction order is known by construction.
+
+\begin{remark}[Choice of $R$ in synthetic experiments]
+Throughout this section, we set $R = \varnothing$ (the empty baseline).
+This is the canonical choice for synthetic validation: there is no learned representation to
+condition on, and the estimator's task is purely to identify the interaction order from the
+raw feature blocks $\Phi_1, \Phi_2, \Phi_3$.
+The empty baseline avoids the circularity and information-containment issues that arise with
+learned $R$, and provides the clearest test of whether the CMI estimator correctly recovers
+the ground-truth order structure.
+\end{remark}
+
+\subsection{Ground-Truth Task Families}
+
+We recommend four classes of synthetic tasks:
+
+\paragraph{Order-1 task.}
+Let $X \in \R^d$ and define
+\[
+Y = \1\{w^\top X + \varepsilon > 0\}.
+\]
+The predictive structure is essentially linear / unary.
+
+\paragraph{Order-2 task.}
+Let
+\[
+Y = \1\{X_1 X_2 + \varepsilon > 0\}.
+\]
+The target depends on a pairwise interaction.
+
+\paragraph{Order-3 task.}
+Let
+\[
+Y = \1\{X_1 X_2 X_3 + \varepsilon > 0\}.
+\]
+The target depends on a triplet interaction beyond pairwise terms.
+
+\paragraph{Mixed-order task.}
+Let
+\[
+Y = \1\{a^\top X + b X_1 X_2 + c X_1 X_2 X_3 + \varepsilon > 0\},
+\]
+for nonzero coefficients $a,b,c$.
+
+\subsection{Validation Goals}
+
+The synthetic validation protocol should verify that:
+\begin{itemize}[leftmargin=1.5em]
+    \item for order-1 tasks, $\Delta_1$ dominates and $\Delta_k \approx 0$ for $k \ge 2$,
+    \item for order-2 tasks, $\Delta_2$ is the first substantial gain,
+    \item for order-3 tasks, $\Delta_3$ remains positive after conditioning on lower orders,
+    \item for mixed-order tasks, the estimated order profile matches the construction.
+\end{itemize}
+
+\subsection{Estimator Diagnostics}
+
+The following diagnostics should be reported:
+\begin{itemize}[leftmargin=1.5em]
+    \item mean and standard deviation of $\widehat{\Delta}_k^{\mathrm{CF}}$ across random seeds,
+    \item fold-based uncertainty estimates,
+    \item null distributions obtained via permutation of the candidate block $\Phi_k$,
+    \item sensitivity to auxiliary model choice,
+    \item sensitivity to sample size and dimensionality.
+\end{itemize}
+
+\section{Research Plan}
+
+This section lays out the logical research program implied by the framework.
+
+\subsection{Phase I: Stabilize the Estimation Backbone}
+
+The first phase focuses on estimator reliability. The goal is to ensure that the cross-fitted
+plug-in estimator
+\[
+\widehat{\Delta}^{\mathrm{CF}}_k
+\]
+is stable, interpretable, and capable of recovering the correct interaction order on controlled tasks.
+
+\paragraph{Phase I objectives.}
+\begin{itemize}[leftmargin=1.5em]
+    \item Formalize the estimand $\Delta_k = I(Y;\Phi_k \mid R,\Phi_{<k})$ cleanly.
+    \item Implement a robust cross-fitted estimator based on held-out log-loss reduction.
+    \item Validate the estimator on synthetic tasks with known true order structure, using $R = \varnothing$.
+    \item Quantify bias, variance, and ranking stability across seeds and folds.
+\end{itemize}
+
+\paragraph{Phase I deliverables.}
+\begin{itemize}[leftmargin=1.5em]
+    \item A short mathematical note (this document).
+    \item A reusable estimator implementation.
+    \item A synthetic benchmark suite.
+    \item A calibration report showing when the estimator can and cannot be trusted.
+\end{itemize}
+
+\subsection{Phase II: Order-2 Representation Analysis}
+
+The second phase uses the stabilized estimator to analyze structured order-2 interactions.
+
+\paragraph{Phase II objectives.}
+\begin{itemize}[leftmargin=1.5em]
+    \item Compare unary vs pairwise representations.
+    \item Decompose order-2 contributions into branch-wise components, e.g. symmetric vs
+    antisymmetric.
+    \item Determine whether order-2 structure contributes unique predictive information beyond the
+    baseline representation.
+\end{itemize}
+
+\begin{remark}[Choice of $R$ in Phase II]
+Phase II introduces a non-trivial $R$ for the first time.
+The recommended approach is to use a \emph{frozen unary encoder} as $R$: a model trained using
+only $\Phi_1$ (linear / unary features), so that $\Delta_2 = I(Y;\Phi_2 \mid R,\Phi_1)$
+cleanly measures the additional value of pairwise structure beyond what a strong unary model
+already captures.
+If the analysis is layer-specific (e.g.\ evaluating at different depths of a neural network),
+$R$ should be set to the output of the layer immediately preceding the interaction block, and
+held fixed across all comparisons within Phase II.
+The key invariant to maintain: $R$ must not have been trained using $\Phi_2$ as part of its input
+or supervision signal.
+\end{remark}
+
+\paragraph{Phase II deliverables.}
+\begin{itemize}[leftmargin=1.5em]
+    \item An empirical comparison of order-1 and order-2 profiles.
+    \item Branch-wise CMI decomposition.
+    \item A case study on Clifford-style pairwise interactions.
+\end{itemize}
+
+\subsection{Phase III: Higher-Order Generalization}
+
+The third phase extends the architecture and the analysis to higher-order interaction blocks.
+
+\paragraph{Phase III objectives.}
+\begin{itemize}[leftmargin=1.5em]
+    \item Define practical feature constructions for $\Phi_3,\Phi_4,\ldots$.
+    \item Estimate whether higher-order interactions add unique information beyond lower orders.
+    \item Determine whether higher-order signal is statistically significant and computationally
+    worthwhile.
+\end{itemize}
+
+\paragraph{Phase III deliverables.}
+\begin{itemize}[leftmargin=1.5em]
+    \item A hierarchy of higher-order feature blocks.
+    \item Empirical estimates of $\Delta_3,\Delta_4,\ldots$.
+    \item A comparison of cumulative information gain vs computational cost.
+\end{itemize}
+
+\subsection{Phase IV: Adaptive Order Selection}
+
+The fourth phase uses the order-wise CMI quantities to guide architecture design.
+
+\paragraph{Phase IV objectives.}
+\begin{itemize}[leftmargin=1.5em]
+    \item Build order-gated models with order-specific branches.
+    \item Use $\widehat{\Delta}_k$ and $\eta_k$ to determine which orders should be retained.
+    \item Study whether the interaction-order profile can be learned dynamically across tasks.
+\end{itemize}
+
+\paragraph{Phase IV deliverables.}
+\begin{itemize}[leftmargin=1.5em]
+    \item An adaptive-order interaction architecture.
+    \item A cost-aware order-selection rule.
+    \item A demonstration that the CMI framework can guide architectural pruning or expansion.
+\end{itemize}
+
+\section{Decision Roadmap: What Should Be Done Next?}
+
+The framework naturally suggests several possible next steps. This section organizes them by logical
+dependency.
+
+\subsection{Option A: Improve the Estimator First}
+
+This option prioritizes the statistical backbone.
+
+\paragraph{Why choose this first?}
+Because every later claim --- about order-2 usefulness, higher-order relevance, or adaptive-order
+selection --- depends on the reliability of $\widehat{\Delta}_k$.
+
+\paragraph{Recommended when:}
+\begin{itemize}[leftmargin=1.5em]
+    \item the main uncertainty is whether the current CMI estimation is stable enough,
+    \item synthetic validation has not yet been completed,
+    \item one wants a rigorous measurement tool before committing to architectural development.
+\end{itemize}
+
+\paragraph{Output:}
+A trusted CMI estimation backbone.
+
+\subsection{Option B: Analyze Order-2 Interactions First}
+
+This option uses the current framework to study pairwise interactions in depth before moving to
+higher order.
+
+\paragraph{Why choose this first?}
+Because order-2 is the simplest nontrivial case and already includes rich decompositions
+(e.g. symmetric vs antisymmetric, inner vs wedge).
+
+\paragraph{Recommended when:}
+\begin{itemize}[leftmargin=1.5em]
+    \item the estimator is already reasonably stable,
+    \item one wants the quickest path to an interpretable empirical result,
+    \item the goal is to connect the framework to Clifford-style interactions directly.
+\end{itemize}
+
+\paragraph{Output:}
+A strong order-2 case study and possibly an early paper.
+
+\subsection{Option C: Prototype Higher-Order Blocks Early}
+
+This option prioritizes architectural exploration.
+
+\paragraph{Why choose this first?}
+Because higher-order interaction design may surface implementation bottlenecks, computational
+constraints, or representational ideas that also inform the estimator.
+
+\paragraph{Recommended when:}
+\begin{itemize}[leftmargin=1.5em]
+    \item the research goal is architecture-first,
+    \item one expects representation design to be the main challenge,
+    \item one is comfortable iterating with provisional estimators.
+\end{itemize}
+
+\paragraph{Output:}
+A family of higher-order interaction models, though with weaker measurement guarantees early on.
+
+\subsection{Recommended Logical Next Step}
+
+The most logical next step is:
+
+\begin{quote}
+\textbf{Phase I: improve and validate the CMI estimator on synthetic tasks before moving to
+higher-order architectural claims.}
+\end{quote}
+
+The reason is simple:
+\begin{itemize}[leftmargin=1.5em]
+    \item if the estimator is unstable, all downstream conclusions become fragile;
+    \item if the estimator works well on known-order synthetic tasks, then later empirical claims
+    about order-2, order-3, and adaptive-order selection become much more credible.
+\end{itemize}
+
+Thus the immediate next milestone should be:
+
+\begin{center}
+\framebox{
+\parbox{0.9\textwidth}{
+\textbf{Immediate milestone.}
+Implement and benchmark the cross-fitted estimator
+$\widehat{\Delta}^{\mathrm{CF}}_k$ on synthetic tasks with known ground-truth interaction order
+(using $R = \varnothing$), and evaluate its stability across auxiliary model classes, folds,
+seeds, and sample sizes.
+}}
+\end{center}
+
+\section{Practical Milestone Checklist}
+
+A concrete sequence for the next iteration is:
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item Finalize this mathematical extension.
+    \item Implement the order-$k$ estimator in reusable code.
+    \item Build synthetic datasets with known order structure.
+    \item Benchmark the estimator on these datasets (with $R = \varnothing$).
+    \item Decide whether the estimator is reliable enough to support order-2 and higher-order
+    empirical analysis.
+    \item Only then, proceed to Clifford-style order-2 analysis and higher-order generalization,
+    introducing non-trivial $R$ progressively and documenting its choice explicitly at each stage.
+\end{enumerate}
+
+\end{document}
